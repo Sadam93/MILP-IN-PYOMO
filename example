@@ -1,0 +1,106 @@
+import matplotlib.pyplot as plt
+import pandas as pd
+import pyomo.environ as py
+from pyomo.environ import *
+
+# model
+# from pyomo.core import value
+
+model = py.ConcreteModel()
+data = pd.read_excel('input_data.xlsx', sheet_name='set')
+
+# Set
+model.t = py.Set(initialize=data.time, doc='time')
+t = model.t
+
+# Parameter
+model.pb = py.Param(t, initialize=dict(zip(data.time.values, data.base_load.values)), doc='Base load')
+model.c = py.Param(t, initialize=dict(zip(data.time.values, data.price.values)), doc='cost')
+model.dt = py.Param(initialize=float(dataEV.charging_rate), doc='time duration ')
+model.pmax = py.Param(initialize=5, doc='Maximum Power ')
+model.emax = py.Param(initialize=8, doc='Maximum Controllable Energy ')
+model.plmax = py.Param(initialize=6, doc='Maximum Controllable power')
+# for the simplicity of the equation
+dt = model.dt
+pb = model.pb
+c = model.c
+plmax = model.plmax
+pmax = model.pmax
+emax = model.emax
+# Variable
+model.pl = py.Var(t, bounds=(0, plmax))
+
+pl = model.pl
+
+
+# Constraints
+# note:We can write the constraint like this
+# model.c1 = py.Constraint(expr=sum([pl[i] for i in t]) * dt == 8000)
+
+# note:Other way to write equations of constraints
+def Conctrol_power(model, i):
+    return sum([pl[i] for i in t]) * dt == emax
+model.c1 = py.Constraint(model.t, rule=Conctrol_power, doc='Controllable power')
+def total_power(model, i):
+    return (pb[i] + pl[i]) <= pmax
+model.c2 = py.Constraint(t, rule=total_power, doc='Total power')
+
+
+# Objective
+# note:We can write the Objective like this
+# sum_ob = sum([(pb[i] + pl[i]) * c[i] for i in t])
+# model.obj = py.Objective(expr=sum_ob * dt, sense=minimize)
+
+# note:Other way to write equations of Objective
+
+def objective_rule(model):
+    return sum([(pb[i] + pl[i]) * c[i] for i in t])
+model.objective = Objective(rule=objective_rule, sense=minimize, doc='Define objective function')
+
+# Solve
+opt = py.SolverFactory('cplex')
+result = opt.solve(model)
+print(result)
+# model.pprint()
+
+# Print variables
+print('------------Controllable variable Solution------------------------')
+for i in model.t:
+    print('x[%i] = %i' % (i, py.value(pl[i])))
+print('objective function = ', py.value(model.objective))
+
+# Plotting
+
+# Plotting
+time = []
+pbase = []
+pload = []
+cost = []
+
+for ll in range(len([t, pb, pl, c])):
+    if ll == 0:
+        for i in t:
+            time.append(value(t[i]))
+    elif ll == 1:
+        for i in pb:
+            pbase.append(value(pb[i]))
+    elif ll == 2:
+        for i in pl:
+            pload.append(value(pl[i]))
+    else:
+        for i in c:
+            cost.append(value(c[i]))
+
+fig, (ax0, ax1) = plt.subplots(nrows=2, ncols=1)
+
+ax0.plot(time, pbase, 'b-', label='Base')
+ax0.plot(time, pload, 'g--', label='Controable Load')
+ptotal = [pbase[i] + pload[i] for i in range(len(pbase))]
+ax0.plot(time, ptotal, 'r', label='Total Load')
+ax0.set_ylabel('Electric power (kW)')
+ax0.legend(loc='upper left')
+ax1.plot(time, cost, 'y-+', label='Cost')
+ax1.legend(loc='upper left')
+ax1.set_xlabel('Time (hour)')
+ax1.set_ylabel('Electricity price ($/kW/h)')
+plt.show()
